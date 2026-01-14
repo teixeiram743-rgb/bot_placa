@@ -18,11 +18,8 @@ sdk = mercadopago.SDK(MP_ACCESS_TOKEN)
 usuarios = {}      # {telegram_id: creditos}
 pagamentos = {}    # {payment_id: telegram_id}
 
-# Flask app para webhook
 app = Flask(__name__)
-
-# Guarda referência do bot para enviar mensagens no webhook
-bot_app = None
+bot_app = None   # referência global do bot
 
 
 # ===== MENU =====
@@ -36,14 +33,15 @@ def menu_principal():
     return InlineKeyboardMarkup(teclado)
 
 
-async def mensagem_sem_saldo(update_or_query, user_id):
+async def mensagem_sem_saldo(update_or_query):
     texto = (
         "❌ *Você não possui créditos!*\n\n"
-        "Para consultar uma placa é necessário saldo.\n\n"
+        "Para consultar uma placa é necessário ter saldo.\n\n"
         "💳 *Como recarregar:*\n"
         "• Clique em *Comprar 1 consulta (R$0,01)*\n"
         "• Pague o PIX gerado\n"
-        "• O crédito será liberado automaticamente\n\n"
+        "• Assim que o pagamento for confirmado, "
+        "seu crédito será liberado automaticamente.\n\n"
         "Após recarregar use /consultarplaca"
     )
 
@@ -67,9 +65,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🚗 *Bem-vindo ao Bot Consulta de Placas!*\n\n"
         "📌 Comandos:\n"
-        "/start - Iniciar\n"
+        "/start - Iniciar bot\n"
         "/saldo - Ver saldo\n"
-        "/consultarplaca - Consultar placa\n\n"
+        "/consultarplaca - Consultar uma placa\n\n"
         "Ou use o menu abaixo:",
         parse_mode="Markdown",
         reply_markup=menu_principal()
@@ -94,7 +92,7 @@ async def consultarplaca_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
         usuarios[user_id] = 0
 
     if usuarios[user_id] <= 0:
-        await mensagem_sem_saldo(update, user_id)
+        await mensagem_sem_saldo(update)
         return
 
     await update.message.reply_text(
@@ -126,7 +124,7 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "consultar":
         if usuarios[user_id] <= 0:
-            await mensagem_sem_saldo(query, user_id)
+            await mensagem_sem_saldo(query)
         else:
             await query.edit_message_text(
                 "🔎 *Envie a placa do veículo*\nExemplo: ABC1D23",
@@ -154,7 +152,7 @@ async def gerar_pix(query, user_id):
 
     if "id" not in resp:
         print("ERRO MP:", resp)
-        await query.edit_message_text("❌ Erro ao gerar PIX.")
+        await query.edit_message_text("❌ Erro ao gerar PIX. Tente novamente.")
         return
 
     payment_id = resp["id"]
@@ -170,11 +168,12 @@ async def gerar_pix(query, user_id):
     await query.message.reply_photo(
         photo=bio,
         caption=(
-            f"💳 *PIX GERADO*\n\n"
+            f"💳 *PIX GERADO COM SUCESSO*\n\n"
             f"Valor: R$ {valor:.2f}\n\n"
             f"*Copia e Cola:*\n`{pix_code}`\n\n"
-            f"⏳ Aguardando pagamento...\n"
-            f"Após confirmação, 1 crédito será liberado automaticamente."
+            f"⏳ *Aguardando pagamento...*\n"
+            f"Assim que o pagamento for aprovado, "
+            f"você receberá uma mensagem de confirmação e o crédito será liberado."
         ),
         parse_mode="Markdown"
     )
@@ -194,7 +193,7 @@ async def receber_placa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if usuarios[user_id] <= 0:
-        await mensagem_sem_saldo(update, user_id)
+        await mensagem_sem_saldo(update)
         return
 
     await update.message.reply_text("🔎 Consultando veículo...")
@@ -246,30 +245,30 @@ def webhook():
     if status == "approved":
         user_id = pagamentos.get(payment_id)
         if user_id:
-            usuarios[user_id] += 1
+            usuarios[user_id] += 1  # libera crédito imediato
 
-            # envia mensagem avisando crédito liberado
+            # envia mensagem automática ao usuário
             try:
                 bot_app.bot.send_message(
                     chat_id=user_id,
                     text=(
-                        "✅ *Pagamento confirmado!*\n\n"
-                        "Seu crédito foi liberado.\n"
-                        "Agora você já pode consultar placas.\n\n"
+                        "✅ *Pagamento aprovado!*\n\n"
+                        "Seu crédito foi liberado com sucesso.\n"
+                        "Agora você já pode consultar uma placa.\n\n"
                         "Use o comando:\n/consultarplaca"
                     ),
                     parse_mode="Markdown",
                     reply_markup=menu_principal()
                 )
             except:
-                pass
+                print("Falha ao enviar mensagem de confirmação ao usuário.")
 
             print(f"PIX aprovado → crédito liberado para {user_id}")
 
     return "OK", 200
 
 
-# ===== INICIAR FLASK EM THREAD =====
+# ===== INICIAR FLASK =====
 
 def iniciar_flask():
     app.run(host="0.0.0.0", port=5000)
@@ -280,10 +279,10 @@ def iniciar_flask():
 def main():
     global bot_app
 
-    # inicia Flask (webhook) em thread secundária
+    # inicia webhook Flask em thread secundária
     threading.Thread(target=iniciar_flask).start()
 
-    # inicia Telegram no thread principal (sem erro set_wakeup_fd)
+    # inicia bot Telegram no thread principal
     bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     bot_app.add_handler(CommandHandler("start", start))

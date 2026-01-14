@@ -2,3 +2,5 @@ python-telegram-bot
 requests
 mercadopago
 flask
+qrcode
+pillow

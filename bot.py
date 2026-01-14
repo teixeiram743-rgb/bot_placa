@@ -5,21 +5,53 @@ from flask import Flask, request
 import threading
 import requests, re, mercadopago
 import qrcode, io
+import json
+import os
 
 # ====== TOKENS ======
-BOT_TOKEN = "8145181010:AAH_Biz5U6NoqN3VMrONO72Q_L1iqbdwgB4"
-INFOSIMPLES_TOKEN = "mvNtWrN44x0RNbqy0E6adD0_cAVTp_3Ff46AMzoN"
-MP_ACCESS_TOKEN = "APP_USR-4667277616891710-011417-dcc261351a5eba41983397da434a1417-328105996"
+BOT_TOKEN = "COLE_SEU_TOKEN_BOTFATHER"
+INFOSIMPLES_TOKEN = "COLE_SEU_TOKEN_INFOSIMPLES"
+MP_ACCESS_TOKEN = "COLE_SEU_ACCESS_TOKEN_MERCADOPAGO_APP_USR"
 # ====================
 
 API_URL = "https://api.infosimples.com/api/v2/consultas/placa/{placa}"
 sdk = mercadopago.SDK(MP_ACCESS_TOKEN)
 
 usuarios = {}      # {telegram_id: creditos}
-pagamentos = {}    # {payment_id: telegram_id}
+
+PAGAMENTOS_ARQUIVO = "pagamentos.json"
 
 app = Flask(__name__)
-bot_app = None   # referência global do bot
+bot_app = None
+
+
+# ===== FUNÇÕES DE PERSISTÊNCIA =====
+
+def salvar_pagamento(payment_id, user_id):
+    dados = {}
+    if os.path.exists(PAGAMENTOS_ARQUIVO):
+        with open(PAGAMENTOS_ARQUIVO, "r") as f:
+            try:
+                dados = json.load(f)
+            except:
+                dados = {}
+
+    dados[str(payment_id)] = user_id
+
+    with open(PAGAMENTOS_ARQUIVO, "w") as f:
+        json.dump(dados, f)
+
+
+def carregar_pagamento(payment_id):
+    if not os.path.exists(PAGAMENTOS_ARQUIVO):
+        return None
+
+    with open(PAGAMENTOS_ARQUIVO, "r") as f:
+        try:
+            dados = json.load(f)
+            return dados.get(str(payment_id))
+        except:
+            return None
 
 
 # ===== MENU =====
@@ -40,8 +72,7 @@ async def mensagem_sem_saldo(update_or_query):
         "💳 *Como recarregar:*\n"
         "• Clique em *Comprar 1 consulta (R$0,01)*\n"
         "• Pague o PIX gerado\n"
-        "• Assim que o pagamento for confirmado, "
-        "seu crédito será liberado automaticamente.\n\n"
+        "• Após a confirmação, o crédito será liberado automaticamente.\n\n"
         "Após recarregar use /consultarplaca"
     )
 
@@ -65,9 +96,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🚗 *Bem-vindo ao Bot Consulta de Placas!*\n\n"
         "📌 Comandos:\n"
-        "/start - Iniciar bot\n"
+        "/start - Iniciar\n"
         "/saldo - Ver saldo\n"
-        "/consultarplaca - Consultar uma placa\n\n"
+        "/consultarplaca - Consultar placa\n\n"
         "Ou use o menu abaixo:",
         parse_mode="Markdown",
         reply_markup=menu_principal()
@@ -139,7 +170,7 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===== GERAR PIX =====
 
 async def gerar_pix(query, user_id):
-    valor = 0.01  # 1 centavo
+    valor = 0.01
 
     pagamento = sdk.payment().create({
         "transaction_amount": valor,
@@ -151,14 +182,14 @@ async def gerar_pix(query, user_id):
     resp = pagamento["response"]
 
     if "id" not in resp:
-        print("ERRO MP:", resp)
-        await query.edit_message_text("❌ Erro ao gerar PIX. Tente novamente.")
+        await query.edit_message_text("❌ Erro ao gerar PIX.")
         return
 
     payment_id = resp["id"]
     pix_code = resp["point_of_interaction"]["transaction_data"]["qr_code"]
 
-    pagamentos[payment_id] = user_id
+    # Salva vínculo em arquivo
+    salvar_pagamento(payment_id, user_id)
 
     qr = qrcode.make(pix_code)
     bio = io.BytesIO()
@@ -168,12 +199,11 @@ async def gerar_pix(query, user_id):
     await query.message.reply_photo(
         photo=bio,
         caption=(
-            f"💳 *PIX GERADO COM SUCESSO*\n\n"
+            f"💳 *PIX GERADO*\n\n"
             f"Valor: R$ {valor:.2f}\n\n"
             f"*Copia e Cola:*\n`{pix_code}`\n\n"
-            f"⏳ *Aguardando pagamento...*\n"
-            f"Assim que o pagamento for aprovado, "
-            f"você receberá uma mensagem de confirmação e o crédito será liberado."
+            f"⏳ Aguardando pagamento...\n"
+            f"Após confirmação, seu crédito será liberado automaticamente."
         ),
         parse_mode="Markdown"
     )
@@ -189,7 +219,7 @@ async def receber_placa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
 
     if not re.match(r'^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$', placa):
-        await update.message.reply_text("❌ Placa inválida. Ex: ABC1D23")
+        await update.message.reply_text("❌ Placa inválida.")
         return
 
     if usuarios[user_id] <= 0:
@@ -228,7 +258,7 @@ async def receber_placa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["aguardando"] = False
 
 
-# ===== WEBHOOK MERCADO PAGO =====
+# ===== WEBHOOK =====
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -239,29 +269,31 @@ def webhook():
         return "OK", 200
 
     payment_id = data["data"]["id"]
+
     pagamento = sdk.payment().get(payment_id)
     status = pagamento["response"]["status"]
 
     if status == "approved":
-        user_id = pagamentos.get(payment_id)
-        if user_id:
-            usuarios[user_id] += 1  # libera crédito imediato
+        user_id = carregar_pagamento(payment_id)
 
-            # envia mensagem automática ao usuário
+        if user_id:
+            usuarios[user_id] = usuarios.get(user_id, 0) + 1
+
+            # envia mensagem ao usuário
             try:
                 bot_app.bot.send_message(
                     chat_id=user_id,
                     text=(
                         "✅ *Pagamento aprovado!*\n\n"
                         "Seu crédito foi liberado com sucesso.\n"
-                        "Agora você já pode consultar uma placa.\n\n"
-                        "Use o comando:\n/consultarplaca"
+                        "Agora você já pode consultar placas.\n\n"
+                        "Use /consultarplaca"
                     ),
                     parse_mode="Markdown",
                     reply_markup=menu_principal()
                 )
             except:
-                print("Falha ao enviar mensagem de confirmação ao usuário.")
+                pass
 
             print(f"PIX aprovado → crédito liberado para {user_id}")
 
@@ -279,10 +311,8 @@ def iniciar_flask():
 def main():
     global bot_app
 
-    # inicia webhook Flask em thread secundária
     threading.Thread(target=iniciar_flask).start()
 
-    # inicia bot Telegram no thread principal
     bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     bot_app.add_handler(CommandHandler("start", start))

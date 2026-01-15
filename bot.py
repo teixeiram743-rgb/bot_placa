@@ -5,37 +5,34 @@ from flask import Flask, request
 import threading
 import requests, re, mercadopago
 
-# ====== TOKENS ======
+# ====== CONFIGURAÇÕES ======
 BOT_TOKEN = "8145181010:AAH_Biz5U6NoqN3VMrONO72Q_L1iqbdwgB4"
 INFOSIMPLES_TOKEN = "mvNtWrN44x0RNbqy0E6adD0_cAVTp_3Ff46AMzoN"
 MP_ACCESS_TOKEN = "APP_USR-4667277616891710-011417-dcc261351a5eba41983397da434a1417-328105996"
-RENDER_URL = "https://bot-placa-1.onrender.com"  # <- altere
-# ====================
+RENDER_URL = "https://bot-placa-1.onrender.com"
+# ===========================
 
 sdk = mercadopago.SDK(MP_ACCESS_TOKEN)
 
-usuarios = {}          # {telegram_id: creditos}
-usuarios_aceitos = {} # termos aceitos
+usuarios = {}          
+usuarios_aceitos = {} 
 
 app = Flask(__name__)
 bot_app = None
 
 
-# ===== TERMOS =====
+# ===== TERMOS DE USO =====
 
-TERMOS_TEXTO = """
-📄 *TERMOS DE USO*
-
-Este bot fornece consultas de *dados veiculares*.
-Nenhum dado pessoal de proprietário é exibido.
-
-É proibido usar o serviço para:
-• Identificar proprietários  
-• Perseguir terceiros  
-• Atividades ilegais  
-
-Ao clicar em *Aceitar*, você concorda com os termos.
-"""
+TERMOS_TEXTO = (
+    "📄 *TERMOS DE USO*\n\n"
+    "Este bot fornece consultas de *dados veiculares*.\n"
+    "Nenhum dado pessoal do proprietário é exibido.\n\n"
+    "*É proibido usar o serviço para:*\n"
+    "• Identificar proprietários de veículos\n"
+    "• Perseguir, ameaçar ou causar dano a terceiros\n"
+    "• Qualquer atividade ilegal\n\n"
+    "Ao clicar em *Aceitar Termos*, você concorda com estas regras."
+)
 
 
 # ===== MENU =====
@@ -43,13 +40,13 @@ Ao clicar em *Aceitar*, você concorda com os termos.
 def menu_principal():
     teclado = [
         [InlineKeyboardButton("🔎 Consultar placa", callback_data="consultar")],
-        [InlineKeyboardButton("💳 Comprar consulta (PIX / Cartão)", callback_data="comprar")],
+        [InlineKeyboardButton("💳 Comprar consulta", callback_data="comprar")],
         [InlineKeyboardButton("📊 Meu saldo", callback_data="saldo")]
     ]
     return InlineKeyboardMarkup(teclado)
 
 
-# ===== DESCOBRIR ESTADO PELA PLACA =====
+# ===== DESCOBRIR ESTADO =====
 
 def descobrir_estado_placa(placa):
     letra = placa[0]
@@ -68,20 +65,25 @@ def descobrir_estado_placa(placa):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
 
+    # Sempre mostra termos se ainda não aceitou
     if not usuarios_aceitos.get(user_id):
+
         teclado = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ Aceitar Termos", callback_data="aceitar_termos")],
             [InlineKeyboardButton("❌ Recusar", callback_data="recusar_termos")]
         ])
+
         await update.message.reply_text(
-            TERMOS_TEXTO, parse_mode="Markdown", reply_markup=teclado
+            TERMOS_TEXTO,
+            parse_mode="Markdown",
+            reply_markup=teclado
         )
         return
 
     usuarios.setdefault(user_id, 0)
 
     await update.message.reply_text(
-        "🚗 *Bem-vindo ao Bot Consulta de Placas!*",
+        "🚗 *Bot Consulta de Placas*",
         parse_mode="Markdown",
         reply_markup=menu_principal()
     )
@@ -100,7 +102,7 @@ async def saldo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ===== CONSULTAR COMANDO =====
+# ===== CONSULTAR =====
 
 async def consultarplaca_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -108,8 +110,7 @@ async def consultarplaca_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if usuarios[user_id] <= 0:
         await update.message.reply_text(
-            "❌ Sem créditos. Clique em *Comprar consulta*.",
-            parse_mode="Markdown",
+            "❌ Sem créditos. Compre uma consulta.",
             reply_markup=menu_principal()
         )
         return
@@ -136,7 +137,9 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if query.data == "recusar_termos":
-        await query.message.reply_text("❌ É necessário aceitar os termos para usar o bot.")
+        await query.message.reply_text(
+            "❌ É necessário aceitar os termos para usar o bot."
+        )
         return
 
     if not usuarios_aceitos.get(user_id):
@@ -145,55 +148,108 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     usuarios.setdefault(user_id, 0)
 
+    # Saldo
     if query.data == "saldo":
         await query.message.reply_text(
-            f"📊 *Seu saldo:* {usuarios[user_id]} consulta(s)",
-            parse_mode="Markdown",
+            f"📊 Seu saldo: {usuarios[user_id]} consulta(s)",
             reply_markup=menu_principal()
         )
 
+    # Consultar
     elif query.data == "consultar":
         if usuarios[user_id] <= 0:
             await query.message.reply_text(
-                "❌ Sem créditos. Compre uma consulta.",
+                "❌ Sem créditos.",
                 reply_markup=menu_principal()
             )
         else:
             await query.message.reply_text("🔎 Envie a placa (ABC1D23):")
             context.user_data["aguardando"] = True
 
+    # Comprar
     elif query.data == "comprar":
-        await gerar_pagamento(query, user_id)
+        teclado = InlineKeyboardMarkup([
+            [InlineKeyboardButton("💠 Pagar por PIX", callback_data="pagar_pix")],
+            [InlineKeyboardButton("💳 Pagar por Cartão", callback_data="pagar_cartao")],
+            [InlineKeyboardButton("❌ Cancelar", callback_data="cancelar_pagamento")]
+        ])
+        await query.message.reply_text(
+            "💰 Escolha a forma de pagamento:",
+            reply_markup=teclado
+        )
+
+    elif query.data == "cancelar_pagamento":
+        await query.message.reply_text(
+            "❌ Pagamento cancelado.",
+            reply_markup=menu_principal()
+        )
+
+    elif query.data == "pagar_pix":
+        await gerar_pagamento_pix(query, user_id)
+
+    elif query.data == "pagar_cartao":
+        await gerar_pagamento_cartao(query, user_id)
 
 
-# ===== GERAR PAGAMENTO (PIX + CARTÃO) =====
+# ===== PAGAMENTO PIX =====
 
-async def gerar_pagamento(query, user_id):
-    valor = 1.00  # valor por consulta
+async def gerar_pagamento_pix(query, user_id):
+    valor = 1.00
 
     preference = sdk.preference().create({
         "items": [{
-            "title": "Consulta Veicular",
+            "title": "Consulta Veicular (PIX)",
             "quantity": 1,
             "unit_price": valor
         }],
+        "payment_methods": {
+            "excluded_payment_types": [{"id": "credit_card"}]
+        },
         "external_reference": str(user_id),
         "notification_url": f"{RENDER_URL}/webhook",
-        "back_urls": {
-            "success": f"{RENDER_URL}/sucesso",
-            "failure": f"{RENDER_URL}/erro"
-        },
         "auto_return": "approved"
     })
 
-    link_pagamento = preference["response"]["init_point"]
+    link = preference["response"]["init_point"]
+
+    teclado = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💠 Abrir pagamento PIX", url=link)]
+    ])
 
     await query.message.reply_text(
-        "💳 *Pagamento gerado!*\n\n"
-        "Clique no link abaixo para pagar com PIX ou Cartão:\n\n"
-        f"{link_pagamento}\n\n"
-        "Após o pagamento, o crédito será liberado automaticamente.",
-        parse_mode="Markdown"
+        "💠 Pagamento PIX gerado!\nClique abaixo para pagar:",
+        reply_markup=teclado
+    )
+
+
+# ===== PAGAMENTO CARTÃO =====
+
+async def gerar_pagamento_cartao(query, user_id):
+    valor = 1.00
+
+    preference = sdk.preference().create({
+        "items": [{
+            "title": "Consulta Veicular (Cartão)",
+            "quantity": 1,
+            "unit_price": valor
+        }],
+        "payment_methods": {
+            "excluded_payment_types": [{"id": "pix"}]
+        },
+        "external_reference": str(user_id),
+        "notification_url": f"{RENDER_URL}/webhook",
+        "auto_return": "approved"
+    })
+
+    link = preference["response"]["init_point"]
+
+    teclado = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💳 Abrir pagamento Cartão", url=link)]
+    ])
+
+    await query.message.reply_text(
+        "💳 Pagamento por cartão gerado!\nClique abaixo para pagar:",
+        reply_markup=teclado
     )
 
 
@@ -211,13 +267,15 @@ async def receber_placa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if usuarios[user_id] <= 0:
-        await update.message.reply_text("❌ Sem créditos.", reply_markup=menu_principal())
+        await update.message.reply_text(
+            "❌ Sem créditos.",
+            reply_markup=menu_principal()
+        )
         return
 
     await update.message.reply_text("🔎 Consultando...")
 
     estado = descobrir_estado_placa(placa)
-
     url = f"https://api.infosimples.com/api/v2/consultas/detran/{estado}/veiculo"
 
     payload = {
@@ -254,7 +312,7 @@ async def receber_placa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["aguardando"] = False
 
 
-# ===== WEBHOOK MERCADO PAGO =====
+# ===== WEBHOOK =====
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -265,41 +323,26 @@ def webhook():
         return "OK", 200
 
     payment_id = data["data"]["id"]
-
     pagamento = sdk.payment().get(payment_id)
-    status = pagamento["response"]["status"]
 
-    if status == "approved":
+    if pagamento["response"]["status"] == "approved":
         user_id = int(pagamento["response"]["external_reference"])
         usuarios[user_id] = usuarios.get(user_id, 0) + 1
 
-        # Mensagem automática no Telegram
         try:
             bot_app.bot.send_message(
                 chat_id=user_id,
                 text=(
-                    "✅ *Pagamento aprovado!*\n\n"
+                    "✅ Pagamento aprovado!\n"
                     f"📊 Novo saldo: {usuarios[user_id]} consulta(s)\n\n"
                     "Você já pode consultar placas 👇"
                 ),
-                parse_mode="Markdown",
                 reply_markup=menu_principal()
             )
         except:
             pass
 
     return "OK", 200
-
-
-# ===== ROTAS DE RETORNO OPCIONAIS =====
-
-@app.route("/sucesso")
-def sucesso():
-    return "Pagamento aprovado! Você pode voltar ao bot."
-
-@app.route("/erro")
-def erro():
-    return "Pagamento não concluído."
 
 
 # ===== INICIAR =====

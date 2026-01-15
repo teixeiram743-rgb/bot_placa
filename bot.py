@@ -6,10 +6,10 @@ import threading
 import requests, re, mercadopago
 
 # ====== CONFIGURAÇÕES ======
-BOT_TOKEN = "SEU_TOKEN_BOTFATHER"
-INFOSIMPLES_TOKEN = "SEU_TOKEN_INFOSIMPLES"
-MP_ACCESS_TOKEN = "APP_USR_SEU_TOKEN_MERCADOPAGO"
-RENDER_URL = "https://SEU_APP.onrender.com"
+BOT_TOKEN = "8145181010:AAH_Biz5U6NoqN3VMrONO72Q_L1iqbdwgB4"
+INFOSIMPLES_TOKEN = "mvNtWrN44x0RNbqy0E6adD0_cAVTp_3Ff46AMzoN"
+MP_ACCESS_TOKEN = "APP_USR-4667277616891710-011417-dcc261351a5eba41983397da434a1417-328105996"
+RENDER_URL = "https://bot-placa-1.onrender.com"
 # ===========================
 
 sdk = mercadopago.SDK(MP_ACCESS_TOKEN)
@@ -346,3 +346,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
